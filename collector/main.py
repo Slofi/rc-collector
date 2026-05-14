@@ -5,10 +5,16 @@
 #   UART0 TX -> GP0  -> T114 RX (hardware UART pin)
 #   UART0 RX <- GP1  <- T114 TX (hardware UART pin)
 #
-# Serial protocol from T114:
+# Serial protocol (T114 → RP2040):
 #   OBS|ADV|<pubkey_hex32>|<rssi>|<snr>|<uptime_s>   — advert (full identity)
 #   OBS|RX|<pkt_hash_hex4>|<rssi>|<snr>|<uptime_s>   — any other packet (coverage)
+#   OMCOLLECT                                          — T114 forwarded OMCOLLECT DM → trigger relay
 #   RC alive | uptime=<s>s                             — heartbeat (ignored)
+#
+# Serial protocol (RP2040 → T114):
+#   RELAY|OMCOLLECT_START|<id>|<count>\r              — start of relay burst
+#   RELAY|OBS|<type>|<id>|<rssi>|<snr>|<ts>\r        — one buffered observation
+#   RELAY|OMCOLLECT_END\r                             — end of relay burst (T114 clears ctx)
 
 import time
 from machine import UART, Pin
@@ -60,16 +66,19 @@ def dump_buffer(max_entries=None):
         print("OBS|{}|{}|{:.1f}|{:.1f}|{}".format(*e))
     print("OMCOLLECT_END")
 
-# ── TODO: DM delivery ──────────────────────────────────────────────────────────
-# When T114 firmware gains a serial 'msg' command:
-#   send "msg <om_pubkey_prefix> OMCOLLECT_START|...\n" lines via uart
-#   triggered by incoming "OMCOLLECT" line forwarded from T114 DM handler
-#
-# def deliver_via_dm(uart, om_pubkey_prefix):
-#     for e in _buf:
-#         obs_str = "OBS|{}|{}|{:.1f}|{:.1f}|{}".format(*e)
-#         uart.write("msg {} {}\n".format(om_pubkey_prefix, obs_str).encode())
-#         time.sleep_ms(200)   # rate limit
+# ── DM delivery via RELAY| protocol ───────────────────────────────────────────
+# T114 firmware intercepts OMCOLLECT DM, writes "OMCOLLECT\n" here,
+# then we send RELAY|<line>\r back for each buffered entry.
+# T114 picks up each RELAY| line and sends it as an encrypted DM to the requester.
+def deliver_relay(uart, max_entries=None):
+    entries = _buf if max_entries is None else _buf[-max_entries:]
+    uart.write("RELAY|OMCOLLECT_START|{}|{}\r".format(COLLECTOR_ID, len(entries)).encode())
+    time.sleep_ms(150)
+    for e in entries:
+        line = "RELAY|OBS|{}|{}|{:.1f}|{:.1f}|{}\r".format(*e)
+        uart.write(line.encode())
+        time.sleep_ms(250)  # rate limit — let T114 encrypt + queue each DM
+    uart.write("RELAY|OMCOLLECT_END\r".encode())
 
 # ── Main loop ──────────────────────────────────────────────────────────────────
 def main():
@@ -103,8 +112,7 @@ def main():
                             _stats['parse_err'] += 1
 
                     elif line == 'OMCOLLECT':
-                        # TODO: replace with DM delivery once firmware supports 'msg' command
-                        dump_buffer()
+                        deliver_relay(uart)
 
         # Print stats every 60s
         if time.ticks_diff(time.ticks_ms(), last_stats) > 60_000:
