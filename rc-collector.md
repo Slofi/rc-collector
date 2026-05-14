@@ -6,7 +6,7 @@ Fork of MeshCore RPTR firmware to add identity-bearing passive observations over
 
 **Linked project:** [OverMesh](/home/slofi/Projects/overmesh/notes.md) — RC observations feed into OM's `passive_obs` system. See "Passive Mesh Intelligence" and "Remote Collector" sections.
 
-**Status:** Active — firmware complete + flashed; needs physical UART wiring + OM parser  
+**Status:** Active — firmware + OM parser complete; needs physical UART wiring only  
 **Repo:** local only — `rc-collector/firmware/` (personal project, no GitHub fork)  
 **Hardware target:** nRF52840 + HT-RA62 — primary: T114 v1 (spare, MC-compatible); fallback: Faketec board  
 **Collector:** RP2040-PiZero (off-grid) / Pi Pico 2W (urban, WiFi POST to OM API)  
@@ -111,6 +111,22 @@ Both 3.3V — direct connection, no level shifter needed.
 ---
 
 ## Changelog
+
+### 2026-05-14 — OM collector DM parser implemented (Session 296)
+- `db.py`: added `collector_id TEXT`, `collector_lat REAL`, `collector_lon REAL` to `passive_obs` table
+- Migration via try/except ALTER TABLE — works on existing DBs without data loss
+- `save_passive_obs` updated to accept and store the three new collector params
+- `mesh_mc.py`: `_rc_collector_state` dict tracks in-flight sessions per (config_id, sender_prefix)
+- `_get_collector_latlon()` resolves collector position from live contacts (adv_lat/adv_lon)
+- `_handle_rc_collector_line()` parses incoming relay lines:
+  - `OMCOLLECT_START|RC1|N` → log session start, store collector_id
+  - `OBS|ADV|<pubkey>|<rssi>|<snr>|<ts>` → save to `passive_obs` with `obs_type='rc_adv'`
+  - `OBS|RX|<hash4>|<rssi>|<snr>|<ts>` → save with `obs_type='rc_rx'`
+  - `OMCOLLECT_END` → clear session state, log completion
+- `on_dm` hook: fires handler in background thread when DM text starts with `OMCOLLECT_START|` or `OBS|` or equals `OMCOLLECT_END`
+- All passive_obs tests pass (5/5); 2 pre-existing unrelated MT failures unchanged
+- OM committed `8ff4913`
+- **Next:** wire T114 GPIO 10/9 → RP2040 GP1/GP0 + GND, then end-to-end test
 
 ### 2026-05-14 — Serial1 hardware UART output added (Session 296)
 - `main.cpp` setup: `Serial1.setPins(9, 10); Serial1.begin(115200);` — GPIO 9 (RX), GPIO 10 (TX)
