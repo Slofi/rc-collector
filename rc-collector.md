@@ -6,7 +6,7 @@ Fork of MeshCore RPTR firmware to add identity-bearing passive observations over
 
 **Linked project:** [OverMesh](/home/slofi/Projects/overmesh/notes.md) — RC observations feed into OM's `passive_obs` system. See "Passive Mesh Intelligence" and "Remote Collector" sections.
 
-**Status:** Active — firmware + collector script done, DM delivery pending  
+**Status:** Active — firmware + collector script + DM delivery done; needs rebuild/flash + hardware wiring  
 **Repo:** local only — `rc-collector/firmware/` (personal project, no GitHub fork)  
 **Hardware target:** nRF52840 + HT-RA62 — primary: T114 v1 (spare, MC-compatible); fallback: Faketec board  
 **Collector:** RP2040-PiZero (off-grid) / Pi Pico 2W (urban, WiFi POST to OM API)  
@@ -87,7 +87,7 @@ OBS|RX|3a7f|−85|4.50|1778157602
 
 - PlatformIO (VS Code extension)
 - Firmware: cloned to `rc-collector/firmware/` — local fork of `meshcore-dev/MeshCore`
-- RC patch commit: `fd58e5f2` (local repo, personal project — no GitHub fork needed)
+- RC patch commits: `fd58e5f2` (OBS serial output), `a1fde994` (OMCOLLECT DM delivery) — local repo, personal project
 - Build target: `Heltec_t114_without_display_repeater`
 - Flash: `pio run -e Heltec_t114_without_display_repeater --target upload --upload-port /dev/ttyACM2`
 - T114 v1 confirmed working — OBS|ADV tested with real MC node advert (RSSI -58, SNR 11.0)
@@ -96,15 +96,21 @@ OBS|RX|3a7f|−85|4.50|1778157602
 
 ## Changelog
 
+### 2026-05-14 — OMCOLLECT DM delivery implemented (Session 296)
+- T114 firmware patched: `OmcollectCtx` struct stores requester identity/secret/path when OMCOLLECT DM arrives
+- `onPeerDataRecv` intercepts "OMCOLLECT" command, writes `OMCOLLECT\n` to serial instead of replying directly
+- `handleCommand` handles `RELAY|<line>` from RP2040: creates encrypted TXT_MSG DM per line, floods or sends direct to original requester; clears context on `RELAY|OMCOLLECT_END`
+- `collector/main.py` updated: `deliver_relay(uart)` sends `RELAY|OMCOLLECT_START|RC1|N\r` + one `RELAY|OBS|...\r` per entry + `RELAY|OMCOLLECT_END\r`, 250ms between sends for rate limiting
+- Dual-direction serial protocol fully documented in file header
+- Firmware committed `a1fde994`, collector committed `970d98f`
+- **Next:** rebuild firmware (`pio run ... --target upload`) → reflash T114 → wire T114 hardware UART to RP2040-PiZero GP0/GP1
+
 ### 2026-05-14 — Collector script written (Session 296)
 - `collector/main.py` written for RP2040-PiZero (MicroPython)
 - UART0 on GP0/GP1 @ 115200 baud connected to T114 hardware UART
 - Parses OBS|ADV (full pubkey) and OBS|RX (4-byte hash) lines
 - Ring buffer: 200 entries, drops oldest when full, tracks stats (adv/rx/dropped/parse_err)
-- OMCOLLECT trigger: responds to "OMCOLLECT" line on UART with full buffer dump
 - 60s periodic stats print for diagnostics
-- DM delivery stubbed out (TODO) — needs `msg` serial command in T114 firmware first
-- **Next:** add `msg <pubkey_prefix> <text>` serial command to T114 firmware to enable DM send
 
 ### 2026-05-14 — Firmware patch complete, serial output confirmed (Session 296)
 - PlatformIO + VS Code installed on TestBox
@@ -113,7 +119,7 @@ OBS|RX|3a7f|−85|4.50|1778157602
 - Startup message + 5s heartbeat added for serial diagnostics
 - T114 v1 flashed, serial confirmed working, OBS|ADV output verified with live MC node
 - Committed as `fd58e5f2` in local firmware repo
-- **Next:** T114 firmware patch for `msg` serial command (DM send) → wire up OMCOLLECT DM delivery in collector
+- **Next:** rebuild firmware and reflash T114 with full OMCOLLECT delivery patch
 
 ### 2026-05-14 — Scope expanded + hardware confirmed (Session 296)
 - T114 v1 confirmed as primary hardware target (spare, MC-compatible, nRF52840 + HT-RA62)
