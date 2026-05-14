@@ -6,7 +6,7 @@ Fork of MeshCore RPTR firmware to add identity-bearing passive observations over
 
 **Linked project:** [OverMesh](/home/slofi/Projects/overmesh/notes.md) — RC observations feed into OM's `passive_obs` system. See "Passive Mesh Intelligence" and "Remote Collector" sections.
 
-**Status:** Active — firmware + collector script + DM delivery done; needs rebuild/flash + hardware wiring  
+**Status:** Active — firmware complete + flashed; needs physical UART wiring + OM parser  
 **Repo:** local only — `rc-collector/firmware/` (personal project, no GitHub fork)  
 **Hardware target:** nRF52840 + HT-RA62 — primary: T114 v1 (spare, MC-compatible); fallback: Faketec board  
 **Collector:** RP2040-PiZero (off-grid) / Pi Pico 2W (urban, WiFi POST to OM API)  
@@ -87,14 +87,38 @@ OBS|RX|3a7f|−85|4.50|1778157602
 
 - PlatformIO (VS Code extension)
 - Firmware: cloned to `rc-collector/firmware/` — local fork of `meshcore-dev/MeshCore`
-- RC patch commits: `fd58e5f2` (OBS serial output), `a1fde994` (OMCOLLECT DM delivery) — local repo, personal project
+- RC patch commits (firmware sub-repo — local only, no GitHub fork):
+  - `fd58e5f2` — OBS|ADV + OBS|RX serial output
+  - `a1fde994` — OMCOLLECT DM delivery (OmcollectCtx + RELAY handler)
+  - `8ed43a65` — Serial1 hardware UART output (GPIO 9/10)
 - Build target: `Heltec_t114_without_display_repeater`
-- Flash: `pio run -e Heltec_t114_without_display_repeater --target upload --upload-port /dev/ttyACM2`
+- Flash: `~/.platformio/penv/bin/pio run -e Heltec_t114_without_display_repeater --target upload --upload-port /dev/ttyACM2`
 - T114 v1 confirmed working — OBS|ADV tested with real MC node advert (RSSI -58, SNR 11.0)
+- T114 currently flashed with `8ed43a65` — all three patches active
+
+### Hardware UART wiring (T114 → RP2040-PiZero)
+
+T114 v1 and v2 are the same physical board. Hardware UART pads confirmed from RS232 bridge variant:
+
+| T114 pad | Direction | RP2040-PiZero |
+|----------|-----------|----------------|
+| GPIO 10 (TX) | → | GP1 (UART0 RX) |
+| GPIO 9 (RX) | ← | GP0 (UART0 TX) |
+| GND | — | GND |
+
+Both 3.3V — direct connection, no level shifter needed.
 
 ---
 
 ## Changelog
+
+### 2026-05-14 — Serial1 hardware UART output added (Session 296)
+- `main.cpp` setup: `Serial1.setPins(9, 10); Serial1.begin(115200);` — GPIO 9 (RX), GPIO 10 (TX)
+- All RC-specific output (OBS|ADV, OBS|RX, OMCOLLECT trigger) now mirrored to Serial1
+- USB Serial preserved for debugging; RP2040 reads from Serial1 hardware UART
+- GPIO 9/10 confirmed from RS232 bridge variant in firmware repo; T114 v1 = v2 physically
+- Firmware committed `8ed43a65`, built clean, flashed to T114 — confirmed heartbeat on USB serial
+- **Next:** wire T114 GPIO 10 (TX) → RP2040 GP1, GPIO 9 (RX) → RP2040 GP0, GND → GND
 
 ### 2026-05-14 — OMCOLLECT DM delivery implemented (Session 296)
 - T114 firmware patched: `OmcollectCtx` struct stores requester identity/secret/path when OMCOLLECT DM arrives
