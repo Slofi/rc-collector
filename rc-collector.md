@@ -6,7 +6,7 @@ Fork of MeshCore RPTR firmware to add identity-bearing passive observations over
 
 **Linked project:** [OverMesh](/home/slofi/Projects/overmesh/notes.md) — RC observations feed into OM's `passive_obs` system. See "Passive Mesh Intelligence" and "Remote Collector" sections.
 
-- **Status:** Active, flashed, and live-tested end to end on TestBox; ready for balcony test deployment.
+- **Status:** Active and live-tested end to end on TestBox. Login bugs fixed and verified — T114 flashed with `3486eda6` (2026-05-16).
 - **Firmware repo:** https://github.com/Slofi/overmesh-RC (public, forked from meshcore-dev/MeshCore)
 - **Hardware target:** nRF52840 + HT-RA62, primary: T114 v1 (spare, MC-compatible); fallback: Faketec board
 - **Collector:** RP2040-PiZero (off-grid) / Pi Pico 2W (urban, WiFi POST to OM API)
@@ -105,12 +105,19 @@ The T114 strips `RELAY|`, encrypts the remaining line as a DM to the OM requeste
   - `8ed43a65` — Serial1 hardware UART output (GPIO 9/10), superseded locally on 2026-05-15 by explicit `RC_SERIAL`/`Serial2` handling for Heltec T114
 - Radio config: 869.618 MHz, BW 62.5 kHz, SF8, **CR8** (matches rest of SLO MC mesh — changed from default CR5 via RPTR Manage)
 - Node name, live position, advert intervals, and admin password are configured via OM RPTR Manage / Remote Collectors UI.
-- Build target: `Heltec_t114_without_display_repeater`
-- Flash: `~/.platformio/penv/bin/pio run -e Heltec_t114_without_display_repeater --target upload --upload-port /dev/ttyACM2`
+- Build target: `Heltec_t114_without_display_repeater_bridge_rs232`
+- Flash: `~/.platformio/penv/bin/pio run -e Heltec_t114_without_display_repeater_bridge_rs232 --target upload --upload-port /dev/ttyACM2`
 - T114 v1 confirmed working — OBS|ADV tested with real MC node advert (RSSI -58, SNR 11.0)
-- T114 currently flashed locally from `/home/slofi/Projects/rc-collector/firmware` after the 2026-05-15 RC UART bridge fix.
+- T114 currently flashed locally from `/home/slofi/Projects/rc-collector/firmware` after the 2026-05-15 prefs persistence fix.
 - Live test on TestBox: OM login succeeded with admin password, `OMCOLLECT` returned `OMCOLLECT_START|RC1|118`, paced `OBS|ADV|...` lines arrived, and OM imported `rc_adv` rows into `passive_obs`.
-- Latest pushed firmware fix: `c6561981 Fix T114 remote collector UART bridge` on `git@github.com:Slofi/overmesh-RC.git` `main`.
+- Latest pushed firmware commits on `git@github.com:Slofi/overmesh-RC.git` `main`:
+  - `3486eda6 Fix Login 1 timeout: backup RESPONSE after PATH for flood logins`
+  - `a5bac934 Fix login failure after first command: separate login/cmd timestamp tracking`
+  - `bdd19478 Harden repeater prefs persistence`
+  - `b91b2788 Freshen manual advert timestamps`
+- Current flashed T114 USB ID: `Heltec_HT-n5262_697705043C5A613A`.
+- Current T114 admin password: `root`.
+- Firmware release backup: `firmware-releases/T114_repeater_bridge_rs232_3486eda6.zip`.
 
 ### Hardware UART wiring (T114 → RP2040-PiZero)
 
@@ -126,7 +133,145 @@ Both 3.3V — direct connection, no level shifter needed.
 
 ---
 
+## Future Ideas (2026-05-15)
+
+Ideas captured after end-to-end validation. RC is always-on, solar-powered — OM isn't. Value is **extended RF visibility from elevation + off-site persistence**.
+
+### Already automated (Session 297)
+- Collect summary bell alert after OMCOLLECT_END (obs count, new nodes, best RSSI)
+- Scheduled auto-collect timer (per OM session, configurable interval)
+- New node alerts — unknown pubkeys flagged on delivery
+- Contact enrichment — RC RSSI/SNR written to known contact records in OM
+- Heatmap auto-refresh after collect; collector position used as fallback for nodes without GPS
+
+### Ideas worth building
+
+**RF range / path loss calculator**
+- RC position known, node position known (if set), RSSI known
+- Calculate actual path loss per observed node, compare to free-space model
+- Flags obstructed links, confirms expected range
+
+**Topology diff**
+- "What does RC hear that home OM never sees?" → mesh blind spots
+- Actionable: where to place next repeater to fill gaps
+
+**Node activity timeline**
+- Per-node graph of when it was heard over past N days
+- Reveals usage patterns, offline nodes, intermittent ones
+- Useful for network health monitoring
+
+**Multi-RC triangulation** ⭐
+- Two RC units at different positions, same node heard by both
+- Cross RSSI gradients → rough position estimate for nodes without GPS
+- Passive location estimation without the node knowing — killer feature for RC2
+- Requires: second RC unit, known collector positions, RSSI-to-distance model
+
+**Message store-and-forward** ⭐
+- RC T114 buffers channel messages it can decrypt while OM is offline
+- Delivered on demand via new `OMMSGS` command (same RELAY pattern as OMCOLLECT)
+- Scope: channel messages only (T114 has the channel key, can decrypt)
+- NOT arbitrary DMs between other nodes (encrypted, T114 can't read those)
+- Use case: "OM was offline for 2 days, what did people say on the channel?"
+- Firmware: new hook in `onRecvTextMsg()` equivalent → write `MSG|CHAN|<from>|<ch>|<text>|<ts>` to RP2040 serial
+- RP2040: second ring buffer for messages, `OMMSGS` command triggers relay
+- OM: parse `MSG|...` lines, store in a new `rc_messages` table, display in OM
+
 ## Changelog
+
+### 2026-05-16 — Login bugs fixed, T114 reflashed (Session 297 cont. #4)
+
+**Login fix #1 — post-command login failure (`a5bac934`):**
+- Root cause: `send_login` uses the local MC radio's internal clock (small, ~seconds since boot); `send_cmd` uses Python `time.time()` (Unix timestamp, ~1.7B). Both updated the shared `ClientInfo.last_timestamp` field used for replay protection. After any command, `last_timestamp` was set to ~1.7B, so all subsequent logins from the MC radio (small timestamp) failed the replay check.
+- Fix: added `last_login_ts` field to `ClientInfo` in `ClientACL.h`. `handleLoginReq` now uses `last_login_ts` for login replay tracking instead of sharing `last_timestamp` with commands. Both fields are transient (reset to 0 on reboot).
+
+**Login fix #2 — Login 1 cold-boot timeout (`3486eda6`):**
+- Root cause: for a flood login request, T114 sends only ONE packet back — a `PAYLOAD_TYPE_PATH` packet with the login response embedded. If that single packet is lost or collides in transit, Python's 12-second timeout fires even though T114 successfully processed the login (evidence: Command 1 always worked after Login 1 timeout, because T114 had the client in ACL and used the command's PATH response to establish `out_path`).
+- Fix: in `onAnonDataRecv`, after sending the PATH packet, also send a staggered (+500ms) plain `PAYLOAD_TYPE_RESPONSE` flood datagram as a backup. If both arrive, receiver's `hasSeen` dedup drops the duplicate cleanly. If PATH is lost, RESPONSE still delivers the login result.
+- Live test (2026-05-16): Login 1 PASS at 1.27s, Login 2 PASS at 1.27s — no timeouts.
+
+**Firmware release backup:** `firmware-releases/T114_repeater_bridge_rs232_3486eda6.zip`
+
+### 2026-05-15 — Manual advert timestamps freshened; OM clock sync added
+
+**Root cause/fix:**
+- MeshCore advert receivers reject replayed/stale adverts when the signed advert timestamp is not newer than the stored `last_advert_timestamp`.
+- A stale RPTR RTC can therefore make a manual `advert` look sent but invisible in OM Map/Sense.
+- Firmware now advances the RPTR RTC from the remote command sender timestamp before manual `advert` and `advert.zerohop`.
+- Firmware commit pushed: `b91b2788 Freshen manual advert timestamps` → `Slofi/overmesh-RC main`.
+
+**OM-side support:**
+- OM commit pushed: `17eaa6d Sync remote collector clock before adverts` → `Slofi/overmesh main`.
+- RPTR Manage now has `Sync clock` plus an `Auto-sync` checkbox.
+- OM allowlist includes `clock sync`.
+- OM automatically sends `clock sync` before remote `advert` / `advert.zerohop`.
+
+**Verification/state:**
+- T114 firmware build succeeded for `Heltec_t114_without_display_repeater_bridge_rs232`.
+- After physical T114 restart, DFU upload to `/dev/ttyACM2` succeeded and reported `Device programmed`.
+- Post-flash admin login with password `root` succeeded through the RPTR Manage API path.
+- Live TestBox sent pre-clock-sync and `advert`; the remote command returned `MSG_SENT`, but no new inbound advert was observed from `ce2192c987bc`. Contact `last_advert` remained stale, so the remaining advert visibility issue needs RF-side retest/diagnosis.
+
+### 2026-05-15 — Password persistence fixed; T114 flashed and ready for balcony
+
+**Root cause/fix:**
+- Failure mode: nRF52 prefs save deleted `/com_prefs` before writing the replacement. If a reset or write failure happened during any remote setting save, the next boot could fall back to defaults, including admin password `password`.
+- Firmware now writes `/com_prefs.tmp`, verifies the full 291-byte prefs file, rotates the previous primary to `/com_prefs.bak`, and restores from backup on boot if primary prefs are missing/truncated.
+- Firmware commit pushed: `bdd19478 Harden repeater prefs persistence` → `Slofi/overmesh-RC main`.
+
+**OM-side guardrail:**
+- OM now marks remote CLI replies such as `Error: wrong password` as failed commands.
+- RC password changes are saved in browser storage only when firmware explicitly replies `password now...`.
+- OM commits pushed:
+  - `2395006 Fix remote collector password command handling`
+  - `2792815 Complete remote collector UI endpoints`
+
+**Flash/password state:**
+- T114 flashed successfully on `/dev/ttyACM2`.
+- USB ID: `Heltec_HT-n5262_697705043C5A613A`.
+- Build target: `Heltec_t114_without_display_repeater_bridge_rs232`.
+- Upload result: `Device programmed.`
+- Serial admin password set explicitly:
+  - Command: `password root`
+  - Reply: `password now: root`
+- Unit is ready to return to balcony deployment.
+
+### 2026-05-15 — Password security fix, OM RC UI polish (Session 297 cont. #3)
+
+**Password security fix (firmware + OM):**
+- `password` command via DM now requires `password <old> <new>` — any authenticated DM client must know current password to change it
+- Serial (physical access) keeps single-arg form: `password <new>` — no old password required
+- Firmware committed `da2c2e29` → `Slofi/overmesh-RC main`
+- OM `changeCollectorPwd` updated to send `password <old> <new>`; blocks if no saved password — `296182e` → `Slofi/overmesh main`
+
+**OM RC collector UI:**
+- "Fetch messages" button moved from RPTR Manage to each RC collector row — `fetchCollectorMessages(ck, btn)` uses collector login pattern + SSE burst
+- Collector card redesigned: clear sections (Actions / Position / Password) with uppercase labels, current values inline
+- Pushed: `ca34ebf` → `Slofi/overmesh main`
+
+**Message store-and-forward (implemented + tested):**
+- 20-message ring buffer on T114 flash (`/msg_store`) — stores decrypted channel messages in `onGroupDataRecv()`
+- `get messages` command triggers async DM burst delivery (MSGSTORE_START → MSG lines → MSGSTORE_END)
+- nRF52 append bug fixed for msg_store and channels files (`_fs->remove()` before write)
+- Channel hash mismatch fixed: `_loadChannels` now detects 128-bit vs 256-bit keys correctly
+- `set channel` parser fixed: handles spaces in channel names (first/last space split)
+- Live test: 3 messages stored and retrieved successfully via OM
+
+### 2026-05-15 — RC delivery hardened, OM polish, RPTR Manage additions (Session 297 cont. #2)
+
+**RC delivery fixes:**
+- Debug prints removed from `collector/main.py` `deliver_relay()` — file re-uploaded to RP2040
+- Flood routing deduplication: `seen` set added to `_rc_collector_state` in `mesh_mc.py`; each OBS line checked before `save_passive_obs` — flood routing delivers each DM twice, second copy now silently dropped
+
+**OM — Obs count per RC:**
+- `count_passive_obs_by_collector()` in `db.py` returns `{collector_id: count}` via `GROUP BY`
+- `/api/mc/<rid>/passive_obs/collector_stats` route added
+- **Obs count** button per collector row: shows toast + logs to bell panel; toggle in Settings → Notifications
+
+**RPTR Manage additions:**
+- **Share location** row: `gps advert none` / `gps advert prefs` — controls whether stored lat/lon is included in adverts; prefills on Read settings; `gps advert` added to allowlist in `mesh_mc.py`
+- Path hash prefill bug fixed: `_mcRemoteNormalizePathHash()` was doing `.includes()` string match — `"> 1"` matched `'1'` and returned `'0'`. Fixed to extract digit directly from firmware response
+- **Silent mode** button (red): `set repeat off` + silence all adverts + `gps advert none` in one click
+- **Resume** button: restores `repeat on`, advert intervals 120/13, `gps advert prefs`
 
 ### 2026-05-15 — RC end-to-end live test passed; firmware bridge bug fixed (Session 297 follow-up)
 
