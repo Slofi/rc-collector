@@ -173,7 +173,6 @@ Both 3.3V — direct connection, no level shifter needed.
 - Parent RC notes/script repo is separate from the nested firmware fork:
   - Local repo: `/home/slofi/Projects/rc-collector`
   - Branch: `main`
-  - Latest local commit: `f2d750f Ignore nested firmware repo`
   - Intended remote: `git@github.com:Slofi/rc-collector.git`
   - Push attempted on 2026-05-15, but GitHub returned `Repository not found`; create the GitHub repo first, then run `git -C /home/slofi/Projects/rc-collector push -u origin main`.
   - Local safety bundle: `/home/slofi/Projects/rc-collector-parent-2026-05-15.bundle`
