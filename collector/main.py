@@ -26,6 +26,7 @@ UART_RX_PIN   = 1       # GP1
 UART_BAUD     = 115200
 BUFFER_SIZE   = 200     # max observations in ring buffer
 COLLECTOR_ID  = "RC1"   # identifies this unit in OM
+RELAY_INTERVAL_MS = 3000 # pace mesh DMs from T114 back to OM
 
 # ── Ring buffer ────────────────────────────────────────────────────────────────
 # Each entry: [type, id, rssi, snr, ts]
@@ -73,11 +74,11 @@ def dump_buffer(max_entries=None):
 def deliver_relay(uart, max_entries=None):
     entries = _buf if max_entries is None else _buf[-max_entries:]
     uart.write("RELAY|OMCOLLECT_START|{}|{}\r".format(COLLECTOR_ID, len(entries)).encode())
-    time.sleep_ms(150)
+    time.sleep_ms(RELAY_INTERVAL_MS)
     for e in entries:
         line = "RELAY|OBS|{}|{}|{:.1f}|{:.1f}|{}\r".format(*e)
         uart.write(line.encode())
-        time.sleep_ms(250)  # rate limit — let T114 encrypt + queue each DM
+        time.sleep_ms(RELAY_INTERVAL_MS)  # rate limit — let T114 encrypt + queue each DM
     uart.write("RELAY|OMCOLLECT_END\r".encode())
 
 # ── Main loop ──────────────────────────────────────────────────────────────────
