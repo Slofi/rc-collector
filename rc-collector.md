@@ -110,6 +110,7 @@ The T114 strips `RELAY|`, encrypts the remaining line as a DM to the OM requeste
 - T114 v1 confirmed working — OBS|ADV tested with real MC node advert (RSSI -58, SNR 11.0)
 - T114 currently flashed locally from `/home/slofi/Projects/rc-collector/firmware` after the 2026-05-15 RC UART bridge fix.
 - Live test on TestBox: OM login succeeded with admin password, `OMCOLLECT` returned `OMCOLLECT_START|RC1|118`, paced `OBS|ADV|...` lines arrived, and OM imported `rc_adv` rows into `passive_obs`.
+- Latest pushed firmware fix: `c6561981 Fix T114 remote collector UART bridge` on `git@github.com:Slofi/overmesh-RC.git` `main`.
 
 ### Hardware UART wiring (T114 → RP2040-PiZero)
 
@@ -165,6 +166,12 @@ Both 3.3V — direct connection, no level shifter needed.
 - RC import now stores only identity-bearing `ADV`/`ANON`/`PEER` observations into `passive_obs`; anonymous `RX` short-hash coverage rows are ignored by passive intel.
 - Collector timestamps are preserved when plausible Unix timestamps are provided.
 - Valid `0.0` coordinates are no longer converted to `None` accidentally.
+
+**Git/GitHub state after closeout:**
+- Firmware fix pushed to `Slofi/overmesh-RC` as `c6561981 Fix T114 remote collector UART bridge`.
+- OM-side Remote Collector fix pushed to `Slofi/overmesh` as `cf7f141 Fix remote collector import and command flow`.
+- This parent RC notes/script repo has local commit `800b5ec Document remote collector live validation`, but no remote is configured for `/home/slofi/Projects/rc-collector`, so it was not pushed.
+- OM `secret.key` remains local/untracked and must never be pushed.
 
 ### 2026-05-15 — Hardware assembled, OM UI complete, firmware pushed to GitHub (Session 297)
 
