@@ -6,7 +6,7 @@ Fork of MeshCore RPTR firmware to add identity-bearing passive observations over
 
 **Linked project:** [OverMesh](/home/slofi/Projects/overmesh/notes.md) — RC observations feed into OM's `passive_obs` system. See "Passive Mesh Intelligence" and "Remote Collector" sections.
 
-- **Status:** Active and live-tested end to end on TestBox. Login bugs fixed and verified — T114 flashed with `3486eda6` (2026-05-16).
+- **Status:** Active and live-tested end to end on TestBox. Login bugs mostly fixed, but remote `advert` can still poison the next login until T114 restart. T114 flashed with `3486eda6` (2026-05-16); OM latest fix is `6bd8e5e`.
 - **Firmware repo:** https://github.com/Slofi/overmesh-RC (public, forked from meshcore-dev/MeshCore)
 - **Hardware target:** nRF52840 + HT-RA62, primary: T114 v1 (spare, MC-compatible); fallback: Faketec board
 - **Collector:** RP2040-PiZero (off-grid) / Pi Pico 2W (urban, WiFi POST to OM API)
@@ -177,6 +177,23 @@ Ideas captured after end-to-end validation. RC is always-on, solar-powered — O
 - OM: parse `MSG|...` lines, store in a new `rc_messages` table, display in OM
 
 ## Changelog
+
+### 2026-05-16 — OM contact/map refresh from RPTR Manage
+
+- OM commit pushed: `6bd8e5e Refresh RPTR contact state from Manage` → `Slofi/overmesh main`.
+- Successful RPTR Manage `get/set name`, `get/set lat`, and `get/set lon` replies now update OM's MC contact archive and push an `mc_node` event.
+- This lets OM replace stale contact display (`Heltec_T114 Repeater`) with the RPTR-reported name (`Argus mobile RPTR`) and show a map marker from stored RPTR coordinates without waiting for a received advert.
+- OM no longer auto-sends flood `advert` after RPTR Manage Name/Position/Share-location changes. Manual Local/Flood advert buttons remain, but live testing showed `advert` can still make the next login time out.
+- Final live check on 2026-05-16: OM was restarted with this fix active, but the T114 was again timing out on login with `root`; restart T114 before the next Manage read/write test.
+
+### 2026-05-16 — OM RPTR Manage prompt/clock polish
+
+- OM commit pushed: `56f7938 Fix RPTR Manage prompt handling` → `Slofi/overmesh main`.
+- OM now strips firmware `>` prompts from remote setting values before displaying/sending them, preventing accidental names such as `> Argus mobile RPTR`.
+- `ERR: clock cannot go backwards` is treated as benign for `clock sync`; it means the RPTR clock is already ahead.
+- Superseded by `6bd8e5e`: OM updates contact/map state from Manage replies and no longer auto-sends a flood advert after setting changes.
+- MC Activity remote advert request rows now use `cmd` wording, making them distinct from actual received advert rows.
+- Live note: during the Codex check, RPTR login with `root` timed out, so the name could not be pushed live from OM at that moment.
 
 ### 2026-05-16 — Login bugs fixed, T114 reflashed (Session 297 cont. #4)
 
