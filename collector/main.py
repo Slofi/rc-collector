@@ -72,13 +72,13 @@ def dump_buffer(max_entries=None):
 # then we send RELAY|<line>\r back for each buffered entry.
 # T114 picks up each RELAY| line and sends it as an encrypted DM to the requester.
 def deliver_relay(uart, max_entries=None):
-    entries = _buf if max_entries is None else _buf[-max_entries:]
+    entries = list(_buf) if max_entries is None else list(_buf[-max_entries:])  # snapshot, not reference
+    print("RELAY: {} entries".format(len(entries)))
     uart.write("RELAY|OMCOLLECT_START|{}|{}\r".format(COLLECTOR_ID, len(entries)).encode())
     time.sleep_ms(RELAY_INTERVAL_MS)
     for e in entries:
-        line = "RELAY|OBS|{}|{}|{:.1f}|{:.1f}|{}\r".format(*e)
-        uart.write(line.encode())
-        time.sleep_ms(RELAY_INTERVAL_MS)  # rate limit — let T114 encrypt + queue each DM
+        uart.write("RELAY|OBS|{}|{}|{:.1f}|{:.1f}|{}\r".format(*e).encode())
+        time.sleep_ms(RELAY_INTERVAL_MS)
     uart.write("RELAY|OMCOLLECT_END\r".encode())
 
 # ── Main loop ──────────────────────────────────────────────────────────────────

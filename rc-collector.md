@@ -111,13 +111,16 @@ The T114 strips `RELAY|`, encrypts the remaining line as a DM to the OM requeste
 - T114 currently flashed locally from `/home/slofi/Projects/rc-collector/firmware` after the 2026-05-15 prefs persistence fix.
 - Live test on TestBox: OM login succeeded with admin password, `OMCOLLECT` returned `OMCOLLECT_START|RC1|118`, paced `OBS|ADV|...` lines arrived, and OM imported `rc_adv` rows into `passive_obs`.
 - Latest pushed firmware commits on `git@github.com:Slofi/overmesh-RC.git` `main`:
+  - `3b54cfda Fix advert timestamp + accept valid repeated logins with stale timestamp`
   - `3486eda6 Fix Login 1 timeout: backup RESPONSE after PATH for flood logins`
   - `a5bac934 Fix login failure after first command: separate login/cmd timestamp tracking`
   - `bdd19478 Harden repeater prefs persistence`
   - `b91b2788 Freshen manual advert timestamps`
 - Current flashed T114 USB ID: `Heltec_HT-n5262_697705043C5A613A`.
 - Current T114 admin password: `root`.
-- Firmware release backup: `firmware-releases/T114_repeater_bridge_rs232_3486eda6.zip`.
+- Firmware release backup: `firmware-releases/T114_repeater_bridge_rs232_3b54cfda.zip`.
+- Node configured: name `Argus mobile RPTR`, position ~46.04/14.45, radio 869.618/62.5/SF8/CR8.
+- Known issue: login requires T114 restart after sessions involving name/position changes. OM now auto-reboots after Set name / Set position via RPTR Manage (`cf6b2cf`). Manual Restart button also added (orange, with confirm dialog — `a84a6cb`).
 
 ### Hardware UART wiring (T114 → RP2040-PiZero)
 
