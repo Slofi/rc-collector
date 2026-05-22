@@ -6,10 +6,11 @@
 #   UART0 RX <- GP1  <- T114 TX (hardware UART pin)
 #
 # Serial protocol (T114 → RP2040):
-#   OBS|ADV|<pubkey_hex32>|<rssi>|<snr>|<uptime_s>   — advert (full identity)
-#   OBS|RX|<pkt_hash_hex4>|<rssi>|<snr>|<uptime_s>   — any other packet (coverage)
-#   OMCOLLECT                                          — T114 forwarded OMCOLLECT DM → trigger relay
-#   RC alive | uptime=<s>s                             — heartbeat (ignored)
+#   OBS|ADV|<pubkey_hex32>|<rssi>|<snr>|<uptime_s>|<name>|<lat>|<lon>  — advert
+#   OBS|RX|<pkt_hash_hex4>|<rssi>|<snr>|<uptime_s>                      — coverage
+#   OMCOLLECT                                                             — trigger relay
+#   OMCOUNT                                                               — report buffer count
+#   RC alive | uptime=<s>s                                               — heartbeat (ignored)
 #
 # Serial protocol (RP2040 → T114):
 #   RELAY|OMCOLLECT_START|<id>|<count>\r              — start of relay burst
@@ -29,55 +30,43 @@ COLLECTOR_ID  = "RC1"   # identifies this unit in OM
 RELAY_INTERVAL_MS = 3000 # pace mesh DMs from T114 back to OM
 
 # ── Ring buffer ────────────────────────────────────────────────────────────────
-# Each entry: [type, id, rssi, snr, ts]
-# type: 'ADV' or 'RX'
-# id:   full pubkey hex (ADV) or 4-byte packet hash hex (RX)
+# Each entry: raw OBS line as received from T114
 _buf   = []
 _stats = {'adv': 0, 'rx': 0, 'dropped': 0, 'parse_err': 0}
 
-def _buf_add(entry):
+def _buf_add(line):
     if len(_buf) >= BUFFER_SIZE:
         _buf.pop(0)
         _stats['dropped'] += 1
-    _buf.append(entry)
+    _buf.append(line)
 
 # ── Parser ─────────────────────────────────────────────────────────────────────
 def parse_obs(line):
-    """Return [type, id, rssi, snr, ts] or None."""
+    """Return True if line is a valid OBS entry worth buffering."""
     try:
         parts = line.split('|')
-        if len(parts) != 6 or parts[0] != 'OBS':
-            return None
-        obs_type = parts[1]
-        if obs_type not in ('ADV', 'RX'):
-            return None
-        return [obs_type, parts[2], float(parts[3]), float(parts[4]), int(parts[5])]
+        if len(parts) < 6 or parts[0] != 'OBS':
+            return False
+        if parts[1] not in ('ADV', 'RX', 'ANON', 'PEER'):
+            return False
+        float(parts[3]); float(parts[4])  # rssi, snr must be numeric
+        return True
     except Exception:
-        return None
+        return False
 
 # ── Stats / dump ───────────────────────────────────────────────────────────────
 def dump_stats():
     print("RC stats: buf={} adv={} rx={} dropped={} err={}".format(
         len(_buf), _stats['adv'], _stats['rx'], _stats['dropped'], _stats['parse_err']))
 
-def dump_buffer(max_entries=None):
-    entries = _buf if max_entries is None else _buf[-max_entries:]
-    print("OMCOLLECT_START|{}|{}".format(COLLECTOR_ID, len(entries)))
-    for e in entries:
-        print("OBS|{}|{}|{:.1f}|{:.1f}|{}".format(*e))
-    print("OMCOLLECT_END")
-
 # ── DM delivery via RELAY| protocol ───────────────────────────────────────────
-# T114 firmware intercepts OMCOLLECT DM, writes "OMCOLLECT\n" here,
-# then we send RELAY|<line>\r back for each buffered entry.
-# T114 picks up each RELAY| line and sends it as an encrypted DM to the requester.
-def deliver_relay(uart, max_entries=None):
-    entries = list(_buf) if max_entries is None else list(_buf[-max_entries:])  # snapshot, not reference
+def deliver_relay(uart):
+    entries = list(_buf)  # snapshot
     print("RELAY: {} entries".format(len(entries)))
     uart.write("RELAY|OMCOLLECT_START|{}|{}\r".format(COLLECTOR_ID, len(entries)).encode())
     time.sleep_ms(RELAY_INTERVAL_MS)
-    for e in entries:
-        uart.write("RELAY|OBS|{}|{}|{:.1f}|{:.1f}|{}\r".format(*e).encode())
+    for line in entries:
+        uart.write(("RELAY|" + line + "\r").encode())
         time.sleep_ms(RELAY_INTERVAL_MS)
     uart.write("RELAY|OMCOLLECT_END\r".encode())
 
@@ -102,10 +91,10 @@ def main():
                     line = raw.decode('utf-8', 'ignore').strip()
 
                     if line.startswith('OBS|'):
-                        obs = parse_obs(line)
-                        if obs:
-                            _buf_add(obs)
-                            if obs[0] == 'ADV':
+                        if parse_obs(line):
+                            _buf_add(line)
+                            obs_type = line.split('|')[1] if '|' in line else ''
+                            if obs_type == 'ADV':
                                 _stats['adv'] += 1
                             else:
                                 _stats['rx'] += 1
@@ -114,6 +103,11 @@ def main():
 
                     elif line == 'OMCOLLECT':
                         deliver_relay(uart)
+
+                    elif line == 'OMCOUNT':
+                        uart.write("RELAY|OMCOUNT_RESULT|{}|{}\r".format(COLLECTOR_ID, len(_buf)).encode())
+                        time.sleep_ms(500)
+                        uart.write("RELAY|OMCOLLECT_END\r".encode())
 
         # Print stats every 60s
         if time.ticks_diff(time.ticks_ms(), last_stats) > 60_000:
